@@ -3,16 +3,18 @@ package com.siparo.auth;
 import com.siparo.common.exception.BusinessException;
 import com.siparo.common.security.CustomUserDetails;
 import com.siparo.common.security.JwtService;
-import com.siparo.common.util.CodeGenerator;
+
 import com.siparo.common.util.PhoneNumbers;
 import com.siparo.customer.Customer;
 import com.siparo.customer.CustomerRepository;
-import com.siparo.platform.PlatformFeatures;
+import com.siparo.delivery.Courier;
+import com.siparo.delivery.CourierRepository;
+
 import com.siparo.restaurant.Restaurant;
 import com.siparo.restaurant.RestaurantRepository;
 import com.siparo.restaurant.RestaurantService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.ObjectProvider;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -22,27 +24,36 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
+
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
-    private static final int RESET_CODE_MINUTES = 5;
-    private static final int RESET_MAX_ATTEMPTS = 5;
-    private static final int RESET_MAX_PER_HOUR = 3;
+
+
+
 
     private final CustomerRepository customerRepository;
     private final RestaurantRepository restaurantRepository;
     private final RestaurantService restaurantService;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
-    private final PasswordResetCodeRepository resetCodeRepository;
-    private final PlatformFeatures platformFeatures;
-    private final ObjectProvider<SmsSender> smsSender;
 
-    public record Session(String token, String role) {}
+
+
+    private final RefreshTokenService refreshTokens;
+    private final LoginAttemptLimiter loginLimiter;
+    private final CourierRepository courierRepository;
+
+    /** {@code refreshToken} yalnızca mobil oturumlarda (müşteri, kurye) verilir; işletme web oturumunda null'dır. */
+    public record Session(String token, String role, String refreshToken) {
+        public Session(String token, String role) {
+            this(token, role, null);
+        }
+    }
 
     // ---------- Müşteri ----------
 
@@ -55,7 +66,7 @@ public class AuthService {
         Customer customer = new Customer();
         customer.setPhoneNumber(phone);
         customer.setFullName(request.fullName().trim());
-        customer.setEmail(request.email() == null || request.email().isBlank() ? null : request.email().trim());
+        customer.setEmail(request.email() == null || request.email().isBlank() ? null : request.email().trim().toLowerCase(java.util.Locale.ROOT));
         customer.setPasswordHash(passwordEncoder.encode(request.password()));
         LocalDateTime acceptedAt = LocalDateTime.now();
         customer.setTermsAcceptedAt(acceptedAt);
@@ -64,24 +75,86 @@ public class AuthService {
         return customerSession(customer);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Session loginCustomer(AuthRequests.Login request) {
-        Customer customer = findCustomer(PhoneNumbers.normalize(request.phoneNumber()))
+        String limitKey = "CUSTOMER:" + PhoneNumbers.normalize(request.phoneNumber());
+        loginLimiter.check(limitKey);
+        Optional<Customer> customer = findCustomer(PhoneNumbers.normalize(request.phoneNumber()))
                 .or(() -> customerRepository.findByPhoneNumber(request.phoneNumber().trim()))
                 .filter(found -> !found.isDeleted() && found.getPasswordHash() != null)
-                .filter(found -> passwordEncoder.matches(request.password(), found.getPasswordHash()))
-                .orElseThrow(this::invalidCredentials);
-        return customerSession(customer);
+                .filter(found -> passwordEncoder.matches(request.password(), found.getPasswordHash()));
+        if (customer.isEmpty()) {
+            loginLimiter.recordFailure(limitKey);
+            throw invalidCredentials();
+        }
+        loginLimiter.recordSuccess(limitKey);
+        return customerSession(customer.get());
     }
 
     private Optional<Customer> findCustomer(String phone) {
         return customerRepository.findByPhoneNumber(phone);
     }
 
-    private Session customerSession(Customer customer) {
+    public Session customerSession(Customer customer) {
         CustomUserDetails user = new CustomUserDetails(customer.getId().toString(), customer.getPhoneNumber(), "", null,
                 List.of(new SimpleGrantedAuthority("ROLE_CUSTOMER")));
-        return new Session(jwtService.generateToken(user), "ROLE_CUSTOMER");
+        return new Session(jwtService.generateMobileToken(user), "ROLE_CUSTOMER",
+                refreshTokens.issue(RefreshTokenService.OWNER_CUSTOMER, customer.getId()));
+    }
+
+    // ---------- Kurye ----------
+
+    /** Kurye oturumu (kimlik doğrulaması CourierService'te yapılır). */
+    @Transactional
+    public Session courierSession(Courier courier) {
+        return new Session(jwtService.generateMobileToken(courierDetails(courier)), "ROLE_COURIER",
+                refreshTokens.issue(RefreshTokenService.OWNER_COURIER, courier.getId()));
+    }
+
+    private CustomUserDetails courierDetails(Courier courier) {
+        return new CustomUserDetails(courier.getId().toString(), courier.getPhoneNumber(), "",
+                courier.getRestaurant().getId().toString(), List.of(new SimpleGrantedAuthority("ROLE_COURIER")));
+    }
+
+    // ---------- Mobil oturum yenileme ----------
+
+    /**
+     * Yenileme token'ını döndürür; yeni erişim + yenileme token'ı verir. Hesap silinmiş/pasifse tüm oturumları kapanır
+     * (INVALID_REFRESH_TOKEN, 401).
+     */
+    @Transactional(noRollbackFor = BusinessException.class)
+    public Session refresh(String rawRefreshToken) {
+        RefreshTokenService.Rotation rotation = refreshTokens.rotate(rawRefreshToken);
+        RefreshTokenService.Owner owner = rotation.owner();
+        if (RefreshTokenService.OWNER_CUSTOMER.equals(owner.type())) {
+            Customer customer = customerRepository.findById(owner.id()).filter(found -> !found.isDeleted())
+                    .orElseThrow(() -> revokeAndReject(owner));
+            CustomUserDetails user = new CustomUserDetails(customer.getId().toString(), customer.getPhoneNumber(), "", null,
+                    List.of(new SimpleGrantedAuthority("ROLE_CUSTOMER")));
+            return new Session(jwtService.generateMobileToken(user), "ROLE_CUSTOMER", rotation.refreshToken());
+        }
+        Courier courier = courierRepository.findById(owner.id()).filter(Courier::isActive)
+                .orElseThrow(() -> revokeAndReject(owner));
+        return new Session(jwtService.generateMobileToken(courierDetails(courier)), "ROLE_COURIER", rotation.refreshToken());
+    }
+
+    /** Çıkış: bu cihazın yenileme token'ı iptal edilir. */
+    public void logout(String rawRefreshToken) {
+        refreshTokens.revoke(rawRefreshToken);
+    }
+
+    /** Şifre değişikliğinden sonra: diğer cihazlardaki oturumlar kapanır, bu cihaza yeni oturum verilir. */
+    @Transactional
+    public Session reissueCustomerSession(UUID customerId) {
+        refreshTokens.revokeAll(RefreshTokenService.OWNER_CUSTOMER, customerId);
+        Customer customer = customerRepository.findById(customerId).filter(found -> !found.isDeleted())
+                .orElseThrow(this::invalidCredentials);
+        return customerSession(customer);
+    }
+
+    private BusinessException revokeAndReject(RefreshTokenService.Owner owner) {
+        refreshTokens.revokeAll(owner.type(), owner.id());
+        return new BusinessException("INVALID_REFRESH_TOKEN", "Session has expired", HttpStatus.UNAUTHORIZED);
     }
 
     // ---------- İşletme ----------
@@ -97,7 +170,7 @@ public class AuthService {
         restaurant.setName(request.restaurantName().trim());
         restaurant.setPhone(phone);
         restaurant.setOwnerPhone(phone);
-        restaurant.setEmail(request.email() == null || request.email().isBlank() ? null : request.email().trim());
+        restaurant.setEmail(request.email() == null || request.email().isBlank() ? null : request.email().trim().toLowerCase(java.util.Locale.ROOT));
         restaurant.setPasswordHash(passwordEncoder.encode(request.password()));
         restaurant.setStatus("ACTIVE");
         restaurant.setMinOrderAmount(BigDecimal.ZERO);
@@ -108,14 +181,20 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public Session loginRestaurant(AuthRequests.Login request) {
-        Restaurant restaurant = restaurantRepository.findFirstByOwnerPhone(PhoneNumbers.normalize(request.phoneNumber()))
+        String limitKey = "RESTAURANT:" + PhoneNumbers.normalize(request.phoneNumber());
+        loginLimiter.check(limitKey);
+        Optional<Restaurant> restaurant = restaurantRepository.findFirstByOwnerPhone(PhoneNumbers.normalize(request.phoneNumber()))
                 .or(() -> restaurantRepository.findFirstByOwnerPhone(request.phoneNumber().trim()))
-                .filter(found -> found.getPasswordHash() != null && passwordEncoder.matches(request.password(), found.getPasswordHash()))
-                .orElseThrow(this::invalidCredentials);
-        return restaurantSession(restaurant);
+                .filter(found -> found.getPasswordHash() != null && passwordEncoder.matches(request.password(), found.getPasswordHash()));
+        if (restaurant.isEmpty()) {
+            loginLimiter.recordFailure(limitKey);
+            throw invalidCredentials();
+        }
+        loginLimiter.recordSuccess(limitKey);
+        return restaurantSession(restaurant.get());
     }
 
-    private Session restaurantSession(Restaurant restaurant) {
+    public Session restaurantSession(Restaurant restaurant) {
         CustomUserDetails user = new CustomUserDetails("admin-" + restaurant.getId(), restaurant.getOwnerPhone(), "",
                 restaurant.getId().toString(), List.of(new SimpleGrantedAuthority("ROLE_RESTAURANT_ADMIN")));
         return new Session(jwtService.generateToken(user), "ROLE_RESTAURANT_ADMIN");
@@ -125,54 +204,4 @@ public class AuthService {
         return new BusinessException("INVALID_CREDENTIALS", "Invalid phone number or password", HttpStatus.UNAUTHORIZED);
     }
 
-    // ---------- Şifre sıfırlama (SMS doğrulama) ----------
-
-    /** Kayıtlı olmayan numara için de aynı yanıt döner (hesap varlığı sızdırılmaz). */
-    @Transactional
-    public Map<String, Object> requestPasswordReset(AuthRequests.ResetRequest request) {
-        SmsSender sender = requireSms();
-        String phone = PhoneNumbers.normalize(request.phoneNumber());
-        if (resetCodeRepository.countByPhoneNumberAndCreatedAtAfter(phone, LocalDateTime.now().minusHours(1)) >= RESET_MAX_PER_HOUR) {
-            throw new BusinessException("OTP_RATE_LIMITED", "Too many reset requests", HttpStatus.TOO_MANY_REQUESTS);
-        }
-        Optional<Customer> customer = findCustomer(phone).filter(found -> !found.isDeleted());
-        if (customer.isPresent()) {
-            String code = CodeGenerator.digits(6);
-            PasswordResetCode reset = new PasswordResetCode();
-            reset.setPhoneNumber(phone);
-            reset.setCodeHash(passwordEncoder.encode(code));
-            reset.setExpiresAt(LocalDateTime.now().plusMinutes(RESET_CODE_MINUTES));
-            resetCodeRepository.save(reset);
-            sender.send(phone, "Siparo dogrulama kodun: " + code + " (" + RESET_CODE_MINUTES + " dk gecerli)");
-        }
-        return Map.of("expiresInSeconds", RESET_CODE_MINUTES * 60);
-    }
-
-    @Transactional(noRollbackFor = BusinessException.class)
-    public Session confirmPasswordReset(AuthRequests.ResetConfirm request) {
-        requireSms();
-        String phone = PhoneNumbers.normalize(request.phoneNumber());
-        PasswordResetCode reset = resetCodeRepository.findFirstByPhoneNumberAndConsumedAtIsNullOrderByCreatedAtDesc(phone)
-                .orElseThrow(() -> new BusinessException("OTP_INVALID", "Verification code is invalid"));
-        if (reset.getExpiresAt().isBefore(LocalDateTime.now()) || reset.getAttempts() >= RESET_MAX_ATTEMPTS) {
-            throw new BusinessException("OTP_EXPIRED", "Verification code has expired");
-        }
-        if (!passwordEncoder.matches(request.code(), reset.getCodeHash())) {
-            reset.setAttempts(reset.getAttempts() + 1);
-            throw new BusinessException("OTP_INVALID", "Verification code is invalid");
-        }
-        Customer customer = findCustomer(phone).filter(found -> !found.isDeleted())
-                .orElseThrow(() -> new BusinessException("OTP_INVALID", "Verification code is invalid"));
-        reset.setConsumedAt(LocalDateTime.now());
-        customer.setPasswordHash(passwordEncoder.encode(request.newPassword()));
-        return customerSession(customer);
-    }
-
-    private SmsSender requireSms() {
-        SmsSender sender = smsSender.getIfAvailable();
-        if (!platformFeatures.passwordResetEnabled() || sender == null) {
-            throw new BusinessException("FEATURE_UNAVAILABLE", "Password reset is not configured", HttpStatus.SERVICE_UNAVAILABLE);
-        }
-        return sender;
-    }
 }

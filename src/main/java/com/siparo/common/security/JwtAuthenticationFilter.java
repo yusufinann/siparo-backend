@@ -26,6 +26,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final CustomerRepository customerRepository;
     private final CourierRepository courierRepository;
+    private final SessionRevocationService revocation;
 
     @Override
     protected void doFilterInternal(
@@ -51,7 +52,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 CustomUserDetails userDetails = new CustomUserDetails(
                         userId, username, "", restaurantId, Collections.singleton(new SimpleGrantedAuthority(role)));
 
-                if (jwtService.isTokenValid(jwt, userDetails) && isPrincipalActive(role, userId)) {
+                if (jwtService.isTokenValid(jwt, userDetails) && isPrincipalActive(role, userId) && revocation.valid(jwt)) {
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                             userDetails, null, userDetails.getAuthorities());
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
@@ -73,6 +74,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if ("ROLE_COURIER".equals(role)) {
             return courierRepository.findById(UUID.fromString(userId)).map(courier -> courier.isActive()).orElse(false);
         }
+
         return true;
     }
 }

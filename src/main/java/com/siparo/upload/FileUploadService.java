@@ -11,7 +11,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.Map;
 import java.util.UUID;
 
@@ -27,9 +26,12 @@ public class FileUploadService {
 
     private final Path fileStorageLocation;
     private final String publicBaseUrl;
+    private final ImageOptimizer imageOptimizer;
 
     public FileUploadService(@Value("${siparo.uploads.dir:uploads}") String directory,
-                             @Value("${siparo.uploads.public-base-url:}") String publicBaseUrl) {
+                             @Value("${siparo.uploads.public-base-url:}") String publicBaseUrl,
+                             ImageOptimizer imageOptimizer) {
+        this.imageOptimizer = imageOptimizer;
         this.fileStorageLocation = Paths.get(directory).toAbsolutePath().normalize();
         this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.replaceAll("/+$", "");
         try {
@@ -51,8 +53,10 @@ public class FileUploadService {
             throw new BusinessException("FILE_TYPE_NOT_ALLOWED", "Only JPEG, PNG or WEBP images are allowed");
         }
         String newFilename = UUID.randomUUID() + EXTENSIONS.get(type);
-        try (InputStream input = file.getInputStream()) {
-            Files.copy(input, fileStorageLocation.resolve(newFilename), StandardCopyOption.REPLACE_EXISTING);
+        try {
+            // Mobil ağda menü görselleri küçük kalsın: uzun kenar sınırlanır, gerekirse yeniden sıkıştırılır.
+            byte[] stored = imageOptimizer.optimize(file.getBytes(), type);
+            Files.write(fileStorageLocation.resolve(newFilename), stored);
         } catch (IOException ex) {
             throw new IllegalStateException("Could not store file " + newFilename, ex);
         }

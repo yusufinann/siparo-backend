@@ -1,7 +1,0 @@
-com\siparo\delivery\DeliveryPinServiceTest.class
-com\siparo\order\realtime\OrderRealtimeHandlerTest.class
-com\siparo\restaurant\OpeningHoursServiceTest.class
-com\siparo\order\PricingServiceTest.class
-com\siparo\delivery\DeliveryServiceStartTest.class
-com\siparo\common\util\PhoneNumbersTest.class
-com\siparo\delivery\DeliveryAssignmentStatusTest.class

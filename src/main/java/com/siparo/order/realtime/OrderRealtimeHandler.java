@@ -31,6 +31,8 @@ public class OrderRealtimeHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
     private final JwtService jwtService;
+    private final com.siparo.common.security.SessionRevocationService revocation;
+    private final ConcurrentMap<String, String> sessionTokens = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, ConcurrentMap<String, WebSocketSession>> restaurantSessions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, UUID> restaurantBySession = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, ConcurrentMap<String, WebSocketSession>> customerSessions = new ConcurrentHashMap<>();
@@ -79,6 +81,8 @@ public class OrderRealtimeHandler extends TextWebSocketHandler {
                 return;
             }
 
+            if (!revocation.valid(token)) { session.close(UNAUTHORIZED); return; }
+            sessionTokens.put(session.getId(), token);
             UUID principalId = UUID.fromString(idClaim);
             WebSocketSession safeSession = new ConcurrentWebSocketSessionDecorator(
                     session,
@@ -130,6 +134,14 @@ public class OrderRealtimeHandler extends TextWebSocketHandler {
                 "occurredAt", Instant.now().toString()));
     }
 
+    /** Müşterinin bildirim merkezine yeni kayıt düştü; açık uygulama toast + ses gösterir. */
+    public void publishNotification(UUID customerId, Object notification) {
+        publish(customerSessions.get(customerId), Map.of(
+                "type", "NOTIFICATION_CREATED",
+                "notification", notification,
+                "occurredAt", Instant.now().toString()));
+    }
+
     /** İşletme panosunu yenilemek için genel olay (örn. yeni müşteri sorunu). */
     public void publishRestaurantEvent(UUID restaurantId, String type, UUID orderId) {
         publish(restaurantSessions.get(restaurantId), Map.of(
@@ -165,6 +177,9 @@ public class OrderRealtimeHandler extends TextWebSocketHandler {
         TextMessage message = new TextMessage(payload);
         sessions.forEach((sessionId, session) -> {
             try {
+                if (!revocation.valid(sessionTokens.get(sessionId))) {
+                    session.close(UNAUTHORIZED); removeSession(sessionId); return;
+                }
                 if (session.isOpen()) {
                     session.sendMessage(message);
                 } else {
@@ -193,7 +208,10 @@ public class OrderRealtimeHandler extends TextWebSocketHandler {
             session = courierId == null ? null
                     : courierSessions.getOrDefault(courierId, new ConcurrentHashMap<>()).get(sessionId);
         }
-        if (session != null && session.isOpen()) session.sendMessage(message);
+        if (session != null && session.isOpen()) {
+            if (!revocation.valid(sessionTokens.get(sessionId))) { session.close(UNAUTHORIZED); removeSession(sessionId); }
+            else session.sendMessage(message);
+        }
     }
 
     @Override
@@ -208,6 +226,7 @@ public class OrderRealtimeHandler extends TextWebSocketHandler {
     }
 
     private void removeSession(String sessionId) {
+        sessionTokens.remove(sessionId);
         UUID restaurantId = restaurantBySession.remove(sessionId);
         if (restaurantId != null) restaurantSessions.computeIfPresent(restaurantId, (ignored, sessions) -> {
             sessions.remove(sessionId);

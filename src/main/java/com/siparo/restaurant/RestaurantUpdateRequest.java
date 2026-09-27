@@ -29,6 +29,7 @@ public record RestaurantUpdateRequest(
         @Min(1) @Max(240) Integer deliveryTimeMax,
         @Size(max = 255) String tags,
         @Size(max = 255) String paymentMethods,
+        @Size(max = 255) String mealCards,
         @DecimalMin("-90") @DecimalMax("90") Double latitude,
         @DecimalMin("-180") @DecimalMax("180") Double longitude,
         @DecimalMin("0.1") @DecimalMax("100") BigDecimal deliveryRadiusKm,

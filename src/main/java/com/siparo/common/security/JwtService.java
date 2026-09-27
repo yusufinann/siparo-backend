@@ -23,6 +23,10 @@ public class JwtService {
     @Value("${jwt.expiration}")
     private long jwtExpiration;
 
+    /** Mobil (müşteri/kurye) erişim token'ı kısa ömürlüdür; oturum yenileme token'ıyla uzatılır. */
+    @Value("${jwt.mobile-access-expiration:3600000}")
+    private long mobileAccessExpiration;
+
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
     }
@@ -41,21 +45,34 @@ public class JwtService {
     }
 
     public String generateToken(CustomUserDetails userDetails) {
+        return generateToken(userDetails, jwtExpiration);
+    }
+
+    public String generateMobileToken(CustomUserDetails userDetails) {
+        return generateToken(userDetails, mobileAccessExpiration);
+    }
+
+    private String generateToken(CustomUserDetails userDetails, long expirationMs) {
         Map<String, Object> extraClaims = new HashMap<>();
+        extraClaims.put("authTime", System.currentTimeMillis());
         extraClaims.put("userId", userDetails.getId());
         if (userDetails.getRestaurantId() != null) {
             extraClaims.put("restaurantId", userDetails.getRestaurantId());
         }
         extraClaims.put("role", userDetails.getAuthorities().iterator().next().getAuthority());
-        return generateToken(extraClaims, userDetails);
+        return generateToken(extraClaims, userDetails, expirationMs);
     }
 
     public String generateToken(Map<String, Object> extraClaims, UserDetails userDetails) {
+        return generateToken(extraClaims, userDetails, jwtExpiration);
+    }
+
+    private String generateToken(Map<String, Object> extraClaims, UserDetails userDetails, long expirationMs) {
         return Jwts.builder()
                 .setClaims(extraClaims)
                 .setSubject(userDetails.getUsername())
                 .setIssuedAt(new Date(System.currentTimeMillis()))
-                .setExpiration(new Date(System.currentTimeMillis() + jwtExpiration))
+                .setExpiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(getSignInKey(), SignatureAlgorithm.HS256)
                 .compact();
     }

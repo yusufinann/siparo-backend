@@ -168,6 +168,12 @@ public class CartService {
                 .orElseThrow(() -> new BusinessException("CART_EMPTY", "Cart is empty"));
     }
 
+    /** Sipariş oluşturma için kilitli okuma; ikinci eşzamanlı istek ilk işlem bitince boş sepet (CART_EMPTY) görür. */
+    public Cart lockCartOrThrow(UUID customerId) {
+        return cartRepository.findForUpdateByCustomerId(customerId)
+                .orElseThrow(() -> new BusinessException("CART_EMPTY", "Cart is empty"));
+    }
+
     private void removeLine(Cart cart, CartItem item) {
         cart.getItems().remove(item);
         if (cart.getItems().isEmpty()) cart.reset();

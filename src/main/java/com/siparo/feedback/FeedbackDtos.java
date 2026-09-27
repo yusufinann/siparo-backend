@@ -29,6 +29,15 @@ public final class FeedbackDtos {
     public record ReviewSummary(BigDecimal ratingScore, int ratingCount, Map<Integer, Long> distribution, List<ReviewDto> reviews,
                                 int page, int totalPages) {}
 
+    /**
+     * Diğer müşterilere gösterilen değerlendirme: yalnızca puan, etiket ve tarih. Yorum metni ve yazanın adı yer almaz;
+     * değerlendirme formu yorumun restorana iletildiğini söyler.
+     */
+    public record PublicReviewDto(UUID id, int rating, List<String> tags, LocalDateTime createdAt) {}
+
+    public record PublicReviewSummary(BigDecimal ratingScore, int ratingCount, Map<Integer, Long> distribution,
+                                      List<PublicReviewDto> reviews, int page, int totalPages) {}
+
     public record CreateIssue(
             @NotBlank @Pattern(regexp = "MISSING_ITEM|WRONG_ITEM|LATE_DELIVERY|COLD_FOOD|QUALITY|OTHER") String type,
             @Size(max = 1000) String detail) {}

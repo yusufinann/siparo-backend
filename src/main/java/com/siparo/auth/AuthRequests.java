@@ -9,6 +9,9 @@ import jakarta.validation.constraints.Size;
 public final class AuthRequests {
     private AuthRequests() {}
 
+    /** Mobil oturum yenileme / çıkış. */
+    public record Refresh(@NotBlank @Size(max = 200) String refreshToken) {}
+
     public record Login(@NotBlank @Size(max = 50) String phoneNumber, @NotBlank @Size(max = 100) String password) {}
 
     public record CustomerRegister(

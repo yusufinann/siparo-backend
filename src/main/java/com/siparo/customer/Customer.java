@@ -26,6 +26,8 @@ public class Customer {
     private String fullName;
     private String email;
     private String passwordHash;
+    private String googleSubject;
+    private LocalDateTime sessionsInvalidBefore;
 
     /** Kayıt sırasında zorunlu yasal onayların sunucu tarafındaki kanıt zamanı. */
     private LocalDateTime termsAcceptedAt;

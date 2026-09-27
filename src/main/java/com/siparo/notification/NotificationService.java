@@ -16,6 +16,7 @@ import com.siparo.order.OrderRepository;
 import com.siparo.order.realtime.OrderStatusChangedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -54,9 +55,13 @@ public class NotificationService {
     private final CouponRepository couponRepository;
     private final PushSender pushSender;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public record NotificationDto(UUID id, String type, UUID orderId, UUID restaurantId, Map<String, Object> params,
                                   boolean read, LocalDateTime createdAt) {}
+
+    /** Müşteriye push'la aynı koşulda gönderilen anlık bildirim; açık uygulama bunu toast + ses olarak gösterir. */
+    public record NotificationCreatedEvent(UUID customerId, NotificationDto notification) {}
 
     public record RegisterDevice(String token, String platform, String locale) {}
 
@@ -78,9 +83,9 @@ public class NotificationService {
         if (order.getCancelReason() != null) params.put("cancelReason", order.getCancelReason());
         Customer customer = customerRepository.findById(event.customerId()).orElse(null);
         if (customer == null || customer.isDeleted()) return;
-        create(customer.getId(), type, order.getId(), order.getRestaurant().getId(), params);
+        Notification notification = create(customer.getId(), type, order.getId(), order.getRestaurant().getId(), params);
         if (customer.isNotifyOrderUpdates()) {
-            push("CUSTOMER", customer.getId(), type, params, Map.of("orderId", order.getId().toString(), "type", type));
+            notifyCustomer(notification, params, Map.of("orderId", order.getId().toString(), "type", type));
         }
     }
 
@@ -98,8 +103,8 @@ public class NotificationService {
             if (link.getRemovedAt() != null) continue;
             Customer customer = customerRepository.findById(link.getId().getCustomerId()).orElse(null);
             if (customer == null || customer.isDeleted() || !customer.isNotifyCampaigns()) continue;
-            create(customer.getId(), "CAMPAIGN", null, event.restaurantId(), params);
-            push("CUSTOMER", customer.getId(), "CAMPAIGN", params, Map.of("type", "CAMPAIGN", "restaurantId", event.restaurantId().toString()));
+            Notification notification = create(customer.getId(), "CAMPAIGN", null, event.restaurantId(), params);
+            notifyCustomer(notification, params, Map.of("type", "CAMPAIGN", "restaurantId", event.restaurantId().toString()));
         }
     }
 
@@ -110,8 +115,8 @@ public class NotificationService {
         Order order = orderRepository.findById(event.orderId()).orElse(null);
         if (order == null) return;
         Map<String, Object> params = Map.of("restaurantName", order.getRestaurant().getName(), "orderNumber", order.getOrderNumber());
-        create(event.customerId(), "ISSUE_RESOLVED", order.getId(), event.restaurantId(), params);
-        push("CUSTOMER", event.customerId(), "ISSUE_RESOLVED", params, Map.of("orderId", order.getId().toString(), "type", "ISSUE_RESOLVED"));
+        Notification notification = create(event.customerId(), "ISSUE_RESOLVED", order.getId(), event.restaurantId(), params);
+        notifyCustomer(notification, params, Map.of("orderId", order.getId().toString(), "type", "ISSUE_RESOLVED"));
     }
 
     @Async
@@ -171,7 +176,7 @@ public class NotificationService {
 
     // ---------- Yardımcılar ----------
 
-    private void create(UUID customerId, String type, UUID orderId, UUID restaurantId, Map<String, Object> params) {
+    private Notification create(UUID customerId, String type, UUID orderId, UUID restaurantId, Map<String, Object> params) {
         Notification notification = new Notification();
         notification.setCustomerId(customerId);
         notification.setType(type);
@@ -182,7 +187,13 @@ public class NotificationService {
         } catch (Exception exception) {
             notification.setParams(null);
         }
-        notificationRepository.save(notification);
+        return notificationRepository.save(notification);
+    }
+
+    /** Açık uygulamaya anlık olay (commit sonrası websocket) ve kapalı uygulamaya push. İkisi aynı tercih koşuluyla çağrılır. */
+    private void notifyCustomer(Notification notification, Map<String, Object> params, Map<String, String> data) {
+        eventPublisher.publishEvent(new NotificationCreatedEvent(notification.getCustomerId(), toDto(notification)));
+        push("CUSTOMER", notification.getCustomerId(), notification.getType(), params, data);
     }
 
     private void push(String ownerType, UUID ownerId, String type, Map<String, Object> params, Map<String, String> data) {

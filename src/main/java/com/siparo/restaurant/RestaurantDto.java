@@ -40,6 +40,7 @@ public class RestaurantDto {
     private Integer ratingCount;
     private String tags;
     private String paymentMethods;
+    private String mealCards;
     private List<OpeningHourDto> openingHours;
     private Double latitude;
     private Double longitude;

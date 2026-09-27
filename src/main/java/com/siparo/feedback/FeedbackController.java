@@ -47,6 +47,15 @@ public class FeedbackController {
         return ResponseEntity.ok(feedbackService.reviewsForRestaurant(restaurantId, page, size));
     }
 
+    /** Müşterinin restoran sayfasındaki değerlendirmeler: puan, etiket, tarih. Restoran müşterinin listesinde olmalı. */
+    @GetMapping("/api/v1/restaurants/{restaurantId}/reviews/public")
+    @PreAuthorize("hasRole('CUSTOMER')")
+    public ResponseEntity<FeedbackDtos.PublicReviewSummary> publicReviews(Authentication authentication, @PathVariable UUID restaurantId,
+                                                                          @RequestParam(defaultValue = "0") int page,
+                                                                          @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(feedbackService.publicReviewsForRestaurant(CurrentUser.id(authentication), restaurantId, page, size));
+    }
+
     @GetMapping("/api/v1/restaurants/{restaurantId}/issues")
     @PreAuthorize(OWNER)
     public ResponseEntity<List<FeedbackDtos.IssueDto>> issues(@PathVariable UUID restaurantId,

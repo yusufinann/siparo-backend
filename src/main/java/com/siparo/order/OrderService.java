@@ -66,7 +66,7 @@ public class OrderService {
     @Transactional
     public OrderDto createOrder(UUID customerId, CreateOrderRequest request) {
         Customer customer = customerService.findActive(customerId);
-        Cart cart = cartService.getCartOrThrow(customerId);
+        Cart cart = cartService.lockCartOrThrow(customerId);
         if (cart.getRestaurant() == null || cart.getItems().isEmpty()) {
             throw new BusinessException("CART_EMPTY", "Cart is empty");
         }

@@ -24,6 +24,7 @@ import static org.mockito.Mockito.when;
 
 class OrderRealtimeHandlerTest {
 
+    private com.siparo.common.security.SessionRevocationService revocation;
     private JwtService jwtService;
     private OrderRealtimeHandler handler;
 
@@ -32,7 +33,22 @@ class OrderRealtimeHandlerTest {
         jwtService = new JwtService();
         ReflectionTestUtils.setField(jwtService, "secretKey", "test_secret_key_that_is_long_enough_for_hmac_sha_256_signing");
         ReflectionTestUtils.setField(jwtService, "jwtExpiration", 60_000L);
-        handler = new OrderRealtimeHandler(new ObjectMapper(), jwtService);
+        revocation = mock(com.siparo.common.security.SessionRevocationService.class);
+        when(revocation.valid(org.mockito.ArgumentMatchers.anyString())).thenReturn(true);
+        handler = new OrderRealtimeHandler(new ObjectMapper(), jwtService, revocation);
+    }
+
+    @Test
+    void revokedConnectionCannotReceiveEvents() throws Exception {
+        UUID restaurantId = UUID.randomUUID();
+        WebSocketSession session = session("revoked");
+        String token = token("ROLE_RESTAURANT_ADMIN", restaurantId.toString());
+        handler.handleTextMessage(session, authMessage(token));
+        clearInvocations(session);
+        when(revocation.valid(token)).thenReturn(false);
+        handler.publishOrderCreated(restaurantId, UUID.randomUUID());
+        verify(session).close(org.mockito.ArgumentMatchers.argThat(status -> status.getCode() == 4401));
+        verify(session, org.mockito.Mockito.never()).sendMessage(org.mockito.ArgumentMatchers.any());
     }
 
     @Test

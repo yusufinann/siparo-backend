@@ -40,8 +40,12 @@ public class PlatformFeatures {
         return !"none".equalsIgnoreCase(paymentProvider) && !paymentProvider.isBlank();
     }
 
+    @Value("${SMTP_HOST:}") private String smtpHost;
+    @Value("${siparo.auth.mail-from:}") private String mailFrom;
+    @Value("${siparo.auth.reset-secret:}") private String resetSecret;
+
     public boolean passwordResetEnabled() {
-        return !"none".equalsIgnoreCase(smsProvider) && !smsProvider.isBlank();
+        return !smtpHost.isBlank() && !mailFrom.isBlank() && resetSecret.length() >= 32;
     }
 
     public boolean pushEnabled() {

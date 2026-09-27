@@ -1,5 +1,7 @@
 package com.siparo.customer;
 
+import com.siparo.auth.AuthService;
+import com.siparo.auth.RefreshTokenService;
 import com.siparo.cart.CartRepository;
 import com.siparo.common.exception.BusinessException;
 import com.siparo.common.exception.ResourceNotFoundException;
@@ -43,6 +45,8 @@ public class CustomerService {
     private final DeviceTokenRepository deviceTokenRepository;
     private final NotificationRepository notificationRepository;
     private final PasswordEncoder passwordEncoder;
+    private final RefreshTokenService refreshTokens;
+    private final AuthService authService;
 
     public record LinkResult(RestaurantDto restaurant, boolean alreadyAdded) {}
 
@@ -61,13 +65,15 @@ public class CustomerService {
         return mapToDto(customerRepository.save(customer));
     }
 
+    /** Şifre değişikliği ve oturum yenileme tek işlemde: diğer cihazların oturumları kapanır, bu cihaza yeni oturum verilir. */
     @Transactional
-    public void changePassword(UUID customerId, CustomerRequests.ChangePassword request) {
+    public AuthService.Session changePassword(UUID customerId, CustomerRequests.ChangePassword request) {
         Customer customer = findActive(customerId);
         if (!passwordEncoder.matches(request.currentPassword(), customer.getPasswordHash())) {
             throw new BusinessException("CURRENT_PASSWORD_INCORRECT", "Current password is incorrect");
         }
         customer.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        return authService.reissueCustomerSession(customerId);
     }
 
     @Transactional
@@ -92,6 +98,7 @@ public class CustomerService {
         customerAddressRepository.deleteAll(customerAddressRepository.findByCustomerId(customerId));
         cartRepository.findByCustomerId(customerId).ifPresent(cartRepository::delete);
         deviceTokenRepository.deleteAllByOwnerTypeAndOwnerId("CUSTOMER", customerId);
+        refreshTokens.revokeAll(RefreshTokenService.OWNER_CUSTOMER, customerId);
         notificationRepository.deleteAllByCustomerId(customerId);
         LocalDateTime now = LocalDateTime.now();
         customerRestaurantRepository.findAllById_CustomerId(customerId).forEach(link -> {
@@ -189,6 +196,12 @@ public class CustomerService {
         CustomerRestaurant link = activeLink(customerId, restaurantId);
         link.setRemovedAt(LocalDateTime.now());
         link.setFavorite(false);
+    }
+
+    /** Restoran müşterinin listesinde değilse RESTAURANT_NOT_IN_LIST fırlatır. */
+    @Transactional(readOnly = true)
+    public void requireLinkedRestaurant(UUID customerId, UUID restaurantId) {
+        activeLink(customerId, restaurantId);
     }
 
     private CustomerRestaurant activeLink(UUID customerId, UUID restaurantId) {

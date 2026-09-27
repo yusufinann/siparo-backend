@@ -3,6 +3,7 @@ package com.siparo.feedback;
 import com.siparo.common.exception.BusinessException;
 import com.siparo.common.exception.ResourceNotFoundException;
 import com.siparo.customer.Customer;
+import com.siparo.customer.CustomerService;
 import com.siparo.order.Order;
 import com.siparo.order.OrderMapper;
 import com.siparo.order.OrderRepository;
@@ -35,6 +36,7 @@ public class FeedbackService {
     private final OrderIssueRepository issueRepository;
     private final OrderRepository orderRepository;
     private final RestaurantService restaurantService;
+    private final CustomerService customerService;
     private final OrderMapper orderMapper;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -89,6 +91,18 @@ public class FeedbackService {
         }).toList();
         return new FeedbackDtos.ReviewSummary(restaurant.getRatingScore(), restaurant.getRatingCount() == null ? 0 : restaurant.getRatingCount(),
                 distribution, content, reviews.getNumber(), reviews.getTotalPages());
+    }
+
+    /** Müşteri görünümü: yalnızca restoranı listesine eklemiş müşteriye; sipariş bilgisi, ad ve yorum metni çıkarılmış olarak. */
+    @Transactional(readOnly = true)
+    public FeedbackDtos.PublicReviewSummary publicReviewsForRestaurant(UUID customerId, UUID restaurantId, int page, int size) {
+        customerService.requireLinkedRestaurant(customerId, restaurantId);
+        FeedbackDtos.ReviewSummary summary = reviewsForRestaurant(restaurantId, page, size);
+        List<FeedbackDtos.PublicReviewDto> reviews = summary.reviews().stream()
+                .map(review -> new FeedbackDtos.PublicReviewDto(review.id(), review.rating(), review.tags(), review.createdAt()))
+                .toList();
+        return new FeedbackDtos.PublicReviewSummary(summary.ratingScore(), summary.ratingCount(), summary.distribution(), reviews,
+                summary.page(), summary.totalPages());
     }
 
     private FeedbackDtos.ReviewDto toDto(Review review, Order order, Customer customer) {

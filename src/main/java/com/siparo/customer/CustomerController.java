@@ -1,5 +1,6 @@
 package com.siparo.customer;
 
+import com.siparo.auth.AuthService;
 import com.siparo.common.security.CurrentUser;
 import com.siparo.restaurant.RestaurantDto;
 import jakarta.validation.Valid;
@@ -39,10 +40,10 @@ public class CustomerController {
         return ResponseEntity.ok(customerService.updateProfile(CurrentUser.id(authentication), request));
     }
 
+    /** Şifre değişince diğer cihazlardaki oturumlar kapanır; bu cihaz yeni oturumu ({ token, role, refreshToken }) kullanır. */
     @PostMapping("/me/password")
-    public ResponseEntity<Void> changePassword(Authentication authentication, @Valid @RequestBody CustomerRequests.ChangePassword request) {
-        customerService.changePassword(CurrentUser.id(authentication), request);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<AuthService.Session> changePassword(Authentication authentication, @Valid @RequestBody CustomerRequests.ChangePassword request) {
+        return ResponseEntity.ok(customerService.changePassword(CurrentUser.id(authentication), request));
     }
 
     @PutMapping("/me/notification-preferences")

@@ -6,6 +6,7 @@ import com.siparo.common.util.BusinessClock;
 import com.siparo.common.util.PhoneNumbers;
 import com.siparo.restaurant.Restaurant;
 import com.siparo.restaurant.RestaurantRepository;
+import com.siparo.auth.LoginAttemptLimiter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -26,6 +27,7 @@ public class CourierService {
     private final RestaurantRepository restaurantRepository;
     private final DeliveryAssignmentRepository assignmentRepository;
     private final PasswordEncoder passwordEncoder;
+    private final LoginAttemptLimiter loginLimiter;
 
     @Transactional
     public CourierDto create(UUID restaurantId, DeliveryRequests.CreateCourier request) {
@@ -110,6 +112,8 @@ public class CourierService {
     @Transactional
     public Courier authenticate(DeliveryRequests.CourierLogin request) {
         String phone = PhoneNumbers.normalize(request.phoneNumber());
+        String limitKey = "COURIER:" + phone;
+        loginLimiter.check(limitKey);
         UUID restaurantId = request.restaurantId();
         if (restaurantId == null && request.restaurantCode() != null && !request.restaurantCode().isBlank()) {
             restaurantId = restaurantRepository.findByPublicCodeIgnoreCase(request.restaurantCode().trim())
@@ -129,8 +133,10 @@ public class CourierService {
                 .filter(courier -> passwordEncoder.matches(request.password(), courier.getPasswordHash()))
                 .toList();
         if (matching.isEmpty()) {
+            loginLimiter.recordFailure(limitKey);
             throw new BusinessException("INVALID_CREDENTIALS", "Invalid courier credentials", HttpStatus.UNAUTHORIZED);
         }
+        loginLimiter.recordSuccess(limitKey);
         if (matching.size() > 1) {
             throw new BusinessException("COURIER_RESTAURANT_REQUIRED", "Restaurant code is required for this phone number");
         }

@@ -3,15 +3,19 @@ package com.siparo.restaurant;
 import com.siparo.common.exception.BusinessException;
 import com.siparo.common.exception.ResourceNotFoundException;
 import com.siparo.common.util.CodeGenerator;
+import com.siparo.order.PaymentMethod;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalTime;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -22,6 +26,12 @@ import java.util.stream.Collectors;
 public class RestaurantService {
 
     private static final int PUBLIC_CODE_LENGTH = 8;
+
+    /** Eski web panelinin Türkçe etiketleri (büyük harf, boşluk → alt çizgi). Yemek kartı etiketleri MealCard adlarıyla eşleşir. */
+    private static final Map<String, PaymentMethod> LEGACY_PAYMENT_LABELS = Map.of(
+            "NAKIT", PaymentMethod.CASH_ON_DELIVERY,
+            "KREDI_KARTI", PaymentMethod.CARD_ON_DELIVERY,
+            "BANKA_KARTI", PaymentMethod.CARD_ON_DELIVERY);
 
     private final RestaurantRepository restaurantRepository;
     private final OpeningHourRepository openingHourRepository;
@@ -105,7 +115,7 @@ public class RestaurantService {
         restaurant.setDeliveryTimeMin(request.deliveryTimeMin());
         restaurant.setDeliveryTimeMax(request.deliveryTimeMax());
         restaurant.setTags(trimToNull(request.tags()));
-        restaurant.setPaymentMethods(trimToNull(request.paymentMethods()));
+        applyPaymentOptions(restaurant, request.paymentMethods(), request.mealCards());
         restaurant.setLatitude(request.latitude());
         restaurant.setLongitude(request.longitude());
         restaurant.setDeliveryRadiusKm(request.deliveryRadiusKm());
@@ -157,6 +167,52 @@ public class RestaurantService {
             if (!restaurantRepository.existsByPublicCode(code)) return code;
         }
         throw new IllegalStateException("Could not generate a unique restaurant code");
+    }
+
+    /**
+     * Ödeme yöntemlerini kanonik değerlerle saklar. Eski web sürümleri Türkçe etiket gönderir ("Nakit", "Kredi Kartı",
+     * "Sodexo"); bunlar enum değerlerine çevrilir, tanınmayanlar atılır. Herhangi bir yemek kartı markası seçiliyse
+     * MEAL_CARD_ON_DELIVERY de eklenir. mealCards hiç gönderilmediyse (eski istemci) mevcut markalar korunur.
+     */
+    private void applyPaymentOptions(Restaurant restaurant, String paymentMethods, String mealCards) {
+        Set<PaymentMethod> methods = EnumSet.noneOf(PaymentMethod.class);
+        Set<MealCard> cards = EnumSet.noneOf(MealCard.class);
+        for (String token : tokens(paymentMethods)) {
+            PaymentMethod method = parseEnum(PaymentMethod.class, token);
+            if (method == null) method = LEGACY_PAYMENT_LABELS.get(token);
+            if (method != null) methods.add(method);
+            MealCard card = parseEnum(MealCard.class, token);
+            if (card != null) cards.add(card);
+        }
+        String cardSource = mealCards != null ? mealCards
+                : methods.contains(PaymentMethod.MEAL_CARD_ON_DELIVERY) ? restaurant.getMealCards() : null;
+        for (String token : tokens(cardSource)) {
+            MealCard card = parseEnum(MealCard.class, token);
+            if (card != null) cards.add(card);
+        }
+        if (!cards.isEmpty()) methods.add(PaymentMethod.MEAL_CARD_ON_DELIVERY);
+        restaurant.setPaymentMethods(joinNames(methods));
+        restaurant.setMealCards(joinNames(cards));
+    }
+
+    private static List<String> tokens(String value) {
+        if (value == null) return List.of();
+        return Arrays.stream(value.split(","))
+                .map(token -> token.trim().toUpperCase(Locale.ROOT).replace(' ', '_'))
+                .filter(token -> !token.isEmpty())
+                .toList();
+    }
+
+    private static <E extends Enum<E>> E parseEnum(Class<E> type, String token) {
+        try {
+            return Enum.valueOf(type, token);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static String joinNames(Set<? extends Enum<?>> values) {
+        return values.isEmpty() ? null : values.stream().map(Enum::name).collect(Collectors.joining(","));
     }
 
     private String trimToNull(String value) {

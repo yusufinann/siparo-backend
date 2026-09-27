@@ -2,6 +2,7 @@ package com.siparo.order.realtime;
 
 import com.siparo.delivery.DeliveryEvents;
 import com.siparo.feedback.FeedbackEvents;
+import com.siparo.notification.NotificationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -31,6 +32,11 @@ public class OrderRealtimeEventListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onCourierDeliveryChanged(DeliveryEvents.CourierDeliveryChanged event) {
         realtimeHandler.publishCourierDeliveryChanged(event.courierId(), event.assignmentId(), event.orderId(), event.type());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onNotificationCreated(NotificationService.NotificationCreatedEvent event) {
+        realtimeHandler.publishNotification(event.customerId(), event.notification());
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)

@@ -38,6 +38,8 @@ public class Restaurant {
     private String ownerPhone;
     private String email;
     private String passwordHash;
+    private String googleSubject;
+    private LocalDateTime sessionsInvalidBefore;
     private String address;
     /** ACTIVE: sipariş kabul ediyor, INACTIVE: işletme siparişleri geçici olarak durdurdu. */
     private String status;
@@ -52,7 +54,10 @@ public class Restaurant {
     private Integer ratingCount = 0;
     private String tags;
     private BigDecimal freeDeliveryThreshold = BigDecimal.ZERO;
+    /** Virgülle ayrılmış PaymentMethod değerleri. */
     private String paymentMethods;
+    /** Virgülle ayrılmış MealCard değerleri; yalnızca MEAL_CARD_ON_DELIVERY kabul ediliyorsa dolu. */
+    private String mealCards;
 
     private Double latitude;
     private Double longitude;

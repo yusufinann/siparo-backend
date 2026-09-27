@@ -1,0 +1,5 @@
+.m2/
+.test-postgres/
+target/
+.env
+.env.local

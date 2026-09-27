@@ -30,14 +30,17 @@ public class AuthController {
         return ResponseEntity.ok(authService.registerCustomer(request));
     }
 
-    @PostMapping("/customer/password-reset/request")
-    public ResponseEntity<Map<String, Object>> requestPasswordReset(@Valid @RequestBody AuthRequests.ResetRequest request) {
-        return ResponseEntity.ok(authService.requestPasswordReset(request));
+    /** Mobil oturum yenileme (müşteri/kurye): yenileme token'ı döner, yeni erişim + yenileme token'ı verilir. */
+    @PostMapping("/refresh")
+    public ResponseEntity<AuthService.Session> refresh(@Valid @RequestBody AuthRequests.Refresh request) {
+        return ResponseEntity.ok(authService.refresh(request.refreshToken()));
     }
 
-    @PostMapping("/customer/password-reset/confirm")
-    public ResponseEntity<AuthService.Session> confirmPasswordReset(@Valid @RequestBody AuthRequests.ResetConfirm request) {
-        return ResponseEntity.ok(authService.confirmPasswordReset(request));
+    /** Mobil çıkış: bu cihazın yenileme token'ı iptal edilir (bilinmeyen token da 204). */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(@RequestBody(required = false) AuthRequests.Refresh request) {
+        if (request != null) authService.logout(request.refreshToken());
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/admin/register")

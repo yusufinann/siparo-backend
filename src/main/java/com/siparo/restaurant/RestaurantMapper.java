@@ -36,6 +36,7 @@ public class RestaurantMapper {
         dto.setRatingCount(restaurant.getRatingCount() == null ? 0 : restaurant.getRatingCount());
         dto.setTags(restaurant.getTags());
         dto.setPaymentMethods(restaurant.getPaymentMethods());
+        dto.setMealCards(restaurant.getMealCards());
         dto.setLatitude(restaurant.getLatitude());
         dto.setLongitude(restaurant.getLongitude());
         dto.setDeliveryRadiusKm(restaurant.getDeliveryRadiusKm());
