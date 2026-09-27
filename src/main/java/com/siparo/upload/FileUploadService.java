@@ -1,6 +1,7 @@
 package com.siparo.upload;
 
 import com.siparo.common.exception.BusinessException;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -27,10 +28,13 @@ public class FileUploadService {
     private final Path fileStorageLocation;
     private final String publicBaseUrl;
     private final ImageOptimizer imageOptimizer;
+    private final ObjectProvider<S3ImageStorage> remoteStorage;
 
     public FileUploadService(@Value("${siparo.uploads.dir:uploads}") String directory,
                              @Value("${siparo.uploads.public-base-url:}") String publicBaseUrl,
-                             ImageOptimizer imageOptimizer) {
+                             ImageOptimizer imageOptimizer,
+                             ObjectProvider<S3ImageStorage> remoteStorage) {
+        this.remoteStorage = remoteStorage;
         this.imageOptimizer = imageOptimizer;
         this.fileStorageLocation = Paths.get(directory).toAbsolutePath().normalize();
         this.publicBaseUrl = publicBaseUrl == null ? "" : publicBaseUrl.replaceAll("/+$", "");
@@ -56,7 +60,13 @@ public class FileUploadService {
         try {
             // Mobil ağda menü görselleri küçük kalsın: uzun kenar sınırlanır, gerekirse yeniden sıkıştırılır.
             byte[] stored = imageOptimizer.optimize(file.getBytes(), type);
-            Files.write(fileStorageLocation.resolve(newFilename), stored);
+            // Render gibi kalıcı diski olmayan ortamda (siparo.uploads.provider=s3) görsel S3 uyumlu depoya yazılır.
+            S3ImageStorage remote = remoteStorage.getIfAvailable();
+            if (remote != null) {
+                remote.put(newFilename, stored, type);
+            } else {
+                Files.write(fileStorageLocation.resolve(newFilename), stored);
+            }
         } catch (IOException ex) {
             throw new IllegalStateException("Could not store file " + newFilename, ex);
         }

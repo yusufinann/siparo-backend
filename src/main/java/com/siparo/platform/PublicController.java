@@ -21,6 +21,12 @@ public class PublicController {
     private final PlatformFeatures features;
     private final RestaurantService restaurantService;
 
+    /** Yalnızca canlılık (Render health check): sunucusuz veritabanını her yoklamada uyandırmamak için DB'ye gitmez. */
+    @GetMapping("/health")
+    public Map<String, String> health() {
+        return Map.of("status", "UP");
+    }
+
     @GetMapping("/config")
     public ResponseEntity<Map<String, Object>> config() {
         Map<String, Object> body = new HashMap<>();
